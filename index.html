@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rail Safe QR - Emergency Portal</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 30px; background-color: #f4f4f9; }
+        .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0px 4px 12px rgba(0,0,0,0.1); max-width: 400px; margin: auto; }
+        
+        /* Top Red Warning Text */
+        .top-warning { font-size: 11px; color: #dc2626; font-weight: bold; margin-bottom: 12px; line-height: 1.3; text-align: center; background: #fee2e2; padding: 8px; border-radius: 6px; border: 1px solid #fca5a5; }
+
+        .lang-container { text-align: right; margin-bottom: 15px; display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+        .lang-label { font-size: 13px; color: #555; font-weight: bold; }
+        .lang-select { padding: 5px; border-radius: 4px; border: 1px solid #ccc; font-size: 13px; }
+
+        .btn-main { background-color: #d9534f; color: white; border: none; padding: 18px; width: 100%; font-size: 18px; border-radius: 6px; cursor: pointer; margin-top: 10px; font-weight: bold; }
+        .btn-main:disabled { background-color: #cccccc; cursor: not-allowed; }
+        
+        .info { font-size: 14px; color: #666; margin-bottom: 20px; line-height: 1.5; }
+        
+        #checkModal { display: none; margin-top: 20px; padding: 15px; background-color: #fff3cd; border: 1px solid #ffeeba; border-radius: 6px; text-align: left; }
+        
+        .btn-yes { background-color: #28a743; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; width: 48%; }
+        .btn-no { background-color: #dc3545; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; width: 48%; float: right; }
+        button:disabled { opacity: 0.6; cursor: not-allowed; }
+        
+        #beaconSection { display: none; margin-top: 15px; padding-top: 15px; border-top: 1px dashed #ccc; text-align: left; clear: both; }
+        .btn-bt { background-color: #f0ad4e; color: #fff; border: none; padding: 12px; width: 100%; font-size: 14px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-top: 5px; }
+        .btn-bt:disabled { background-color: #cccccc; }
+        
+        #timerDisplay { font-weight: bold; color: #d9534f; }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <!-- Top Red Warning Text (Above Language Selector) -->
+        <div id="txtTopWarning" class="top-warning">
+            If your message was NOT sent, please come back to this page.
+        </div>
+
+        <!-- Language Selection Dropdown with Label -->
+        <div class="lang-container">
+            <span id="txtLangLabel" class="lang-label">Select Language:</span>
+            <select id="langSelect" class="lang-select" onchange="changeLanguage()">
+                <option value="en">English</option>
+                <option value="hi">हिंदी</option>
+                <option value="te">తెలుగు</option>
+            </select>
+        </div>
+
+        <h2 id="txtTitle">Rail Safe QR Emergency</h2>
+        <p class="info" id="txtInfo">Pole ID: <strong>AP-TRK-104</strong><br>Location: Track KM 42/5</p>
+        
+        <!-- Main Emergency Button -->
+        <button id="mainBtn" class="btn-main" onclick="sendEmergencySMS()">Send Emergency Alert</button>
+
+        <!-- Status Check Modal with Resilient Timer -->
+        <div id="checkModal">
+            <p id="txtModalQuestion" style="font-size: 13px; margin: 0 0 5px 0; color: #856404; font-weight: bold;">Did your emergency text go through?</p>
+            <p id="txtTimerText" style="font-size: 11px; color: #666; margin: 0 0 10px 0;">Auto-fallback to offline mode in <span id="timerDisplay">30</span>s if no response.</p>
+            
+            <button id="yesBtn" class="btn-yes" onclick="smsSuccessful()">Yes, Sent</button>
+            <button id="noBtn" class="btn-no" onclick="smsFailed()">No / No Signal</button>
+
+            <!-- Last-Resort Beacon Section -->
+            <div id="beaconSection">
+                <p id="beaconPrompt" style="font-size: 12px; color: #721c24; margin: 10px 0 5px 0; font-weight: bold;">Dead zone confirmed. Activate physical track beacon?</p>
+                <button id="beaconBtn" class="btn-bt" onclick="activateBeacon()">Turn on Bluetooth Pole Beacon</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let leftForSMS = false;
+        let leavingTimestamp = 0;
+        let countdownInterval;
+        let currentLang = 'en';
+        const FALLBACK_DELAY = 30000; // 30 seconds
+
+        // Translations Dictionary
+        const translations = {
+            en: {
+                topWarning: "If your message was NOT sent, please come back to this page.",
+                langLabel: "Select Language:",
+                title: "Rail Safe QR Emergency",
+                info: "Pole ID: <strong>AP-TRK-104</strong><br>Location: Track KM 42/5",
+                mainBtn: "Send Emergency Alert",
+                mainBtnTriggered: "Alert Triggered",
+                modalQuestion: "Did your emergency text go through?",
+                timerText: "Auto-fallback to offline mode in <span id='timerDisplay'>30</span>s if no response.",
+                yesBtn: "Yes, Sent",
+                yesBtnConfirmed: "Confirmed Sent",
+                noBtn: "No / No Signal",
+                noBtnFailed: "Failed / No Signal",
+                beaconPrompt: "Dead zone confirmed. Activate physical track beacon?",
+                beaconBtn: "Turn on Bluetooth Pole Beacon",
+                beaconActive: "Beacon Active (Signal Sent)",
+                cooldownAlert: "This pole was recently reported. Please wait {minutes} minute(s) before sending another alert."
+            },
+            hi: {
+                topWarning: "यदि आपका संदेश नहीं भेजा गया था, तो कृपया इस पृष्ठ पर वापस आएं।",
+                langLabel: "भाषा चुनें:",
+                title: "रेल सुरक्षित क्यूआर आपातकालीन",
+                info: "पोल आईडी: <strong>AP-TRK-104</strong><br>स्थान: ट्रैक KM 42/5",
+                mainBtn: "आपातकालीन चेतावनी भेजें",
+                mainBtnTriggered: "अलर्ट सक्रिय किया गया",
+                modalQuestion: "क्या आपका आपातकालीन संदेश चला गया?",
+                timerText: "कोई प्रतिक्रिया न मिलने पर <span id='timerDisplay'>30</span>s में ऑफ़लाइन मोड पर स्विच हो जाएगा।",
+                yesBtn: "हाँ, भेज दिया",
+                yesBtnConfirmed: "पुष्टि की गई: भेज दिया गया",
+                noBtn: "नहीं / कोई सिग्नल नहीं",
+                noBtnFailed: "विफल / कोई सिग्नल नहीं",
+                beaconPrompt: "डेड ज़ोन की पुष्टि हो गई। भौतिक ट्रैक बीकन सक्रिय करें?",
+                beaconBtn: "ब्लूटूथ पोल बीकन चालू करें",
+                beaconActive: "बीकन सक्रिय (सिग्नल भेजा गया)",
+                cooldownAlert: "इस पोल की सूचना हाल ही में दी गई है। कृपया दूसरा अलर्ट भेजने से पहले {minutes} मिनट प्रतीक्षा करें।"
+            },
+            te: {
+                topWarning: "మీ సందేశం పంపబడకపోతే, దయచేసి ఈ పేజీకి తిరిగి రండి.",
+                langLabel: "భాషను ఎంచుకోండి:",
+                title: "రైల్ సేఫ్ క్యూఆర్ అత్యవసర పోర్టల్",
+                info: "పోల్ ఐడి: <strong>AP-TRK-104</strong><br>ప్రాంతం: ట్రాక్ KM 42/5",
+                mainBtn: "అత్యవసర హెచ్చరికను పంపండి",
+                mainBtnTriggered: "అలర్ట్ సక్రియం చేయబడింది",
+                modalQuestion: "మీ అత్యవసర సందేశం వెళ్ళిందా?",
+                timerText: "స్పందన లేకపోతే <span id='timerDisplay'>30</span>s లో ఆఫ్‌లైన్ మోడ్‌కి మారుతుంది.",
+                yesBtn: "అవును, పంపబడింది",
+                yesBtnConfirmed: "నిర్ధారించబడింది",
+                noBtn: "లేదు / సిగ్నల్ లేదు",
+                noBtnFailed: "విఫలమైంది / సిగ్నల్ లేదు",
+                beaconPrompt: "డెడ్ జోన్ నిర్ధారించబడింది. భౌతిక ట్రాక్ బీకాన్‌ను సక్రియం చేయాలా?",
+                beaconBtn: "బ్లూటూత్ పోల్ బీకాన్‌ను ఆన్ చేయండి",
+                beaconActive: "బీకాన్ సక్రియంగా ఉంది (సిగ్నల్ పంపబడింది)",
+                cooldownAlert: "ఈ పోల్ గురించిన సమాచారం ఇటీవల ఇవ్వబడింది. దయచేసి మరొక హెచ్చరిక పంపే ముందు {minutes} నిమిషాలు వేచి ఉండండి."
+            }
+        };
+
+        function changeLanguage() {
+            currentLang = document.getElementById('langSelect').value;
+            const t = translations[currentLang];
+
+            document.getElementById('txtTopWarning').innerText = t.topWarning;
+            document.getElementById('txtLangLabel').innerText = t.langLabel;
+            document.getElementById('txtTitle').innerText = t.title;
+            document.getElementById('txtInfo').innerHTML = t.info;
+            document.getElementById('txtModalQuestion').innerText = t.modalQuestion;
+            document.getElementById('beaconPrompt').innerText = t.beaconPrompt;
+
+            if (!document.getElementById('mainBtn').disabled) document.getElementById('mainBtn').innerText = t.mainBtn;
+            if (!document.getElementById('yesBtn').disabled) document.getElementById('yesBtn').innerText = t.yesBtn;
+            if (!document.getElementById('noBtn').disabled) document.getElementById('noBtn').innerText = t.noBtn;
+            
+            const beaconBtn = document.getElementById('beaconBtn');
+            if (!beaconBtn.disabled) beaconBtn.innerText = t.beaconBtn;
+        }
+
+        function sendEmergencySMS() {
+            const t = translations[currentLang];
+            const lastAlertTime = localStorage.getItem('lastAlertTimestamp');
+            const cooldownTime = 5 * 60 * 1000;
+            const now = Date.now();
+
+            if (lastAlertTime && (now - lastAlertTime < cooldownTime)) {
+                const remainingMinutes = Math.ceil((cooldownTime - (now - lastAlertTime)) / 60000);
+                alert(t.cooldownAlert.replace('{minutes}', remainingMinutes));
+                return; 
+            }
+
+            const phoneNumber = "+919392411264"; 
+            const message = "EMERGENCY: Track breakage reported at Pole AP-TRK-104. GPS: 16.5062, 80.6480";
+            
+            localStorage.setItem('lastAlertTimestamp', now);
+            leavingTimestamp = Date.now();
+            
+            const mainBtn = document.getElementById('mainBtn');
+            mainBtn.disabled = true;
+            mainBtn.innerText = t.mainBtnTriggered;
+
+            leftForSMS = true;
+
+            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+            if (isMobile) {
+                const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+                const separator = isIOS ? '&' : '?';
+                window.location.href = `sms:${phoneNumber}${separator}body=${encodeURIComponent(message)}`;
+            } else {
+                console.log("Desktop detected: Simulating return from SMS app...");
+                setTimeout(function() {
+                    document.getElementById('checkModal').style.display = 'block';
+                    startReturnTimer(30);
+                }, 1500);
+            }
+        }
+
+        document.addEventListener("visibilitychange", function() {
+            if (document.visibilityState === "visible" && leftForSMS) {
+                document.getElementById('checkModal').style.display = 'block';
+                
+                const elapsedTime = Date.now() - leavingTimestamp;
+                const remainingTime = FALLBACK_DELAY - elapsedTime;
+
+                if (remainingTime <= 0) {
+                    if(document.getElementById('timerDisplay')) document.getElementById('timerDisplay').innerText = 0;
+                    smsFailed();
+                } else {
+                    startReturnTimer(Math.ceil(remainingTime / 1000));
+                }
+            }
+        });
+
+        function startReturnTimer(secondsLeft) {
+            let timeLeft = secondsLeft;
+            if(document.getElementById('timerDisplay')) document.getElementById('timerDisplay').innerText = timeLeft;
+
+            clearInterval(countdownInterval);
+            countdownInterval = setInterval(function() {
+                timeLeft--;
+                if(document.getElementById('timerDisplay')) document.getElementById('timerDisplay').innerText = timeLeft;
+
+                if (timeLeft <= 0) {
+                    clearInterval(countdownInterval);
+                    smsFailed();
+                }
+            }, 1000);
+        }
+
+        function smsSuccessful() {
+            const t = translations[currentLang];
+            clearInterval(countdownInterval);
+            document.getElementById('yesBtn').disabled = true;
+            document.getElementById('noBtn').disabled = true;
+            document.getElementById('yesBtn').innerText = t.yesBtnConfirmed;
+            leftForSMS = false;
+        }
+
+        function smsFailed() {
+            const t = translations[currentLang];
+            clearInterval(countdownInterval);
+            document.getElementById('yesBtn').disabled = true;
+            document.getElementById('noBtn').disabled = true;
+            document.getElementById('noBtn').innerText = t.noBtnFailed;
+            
+            const beaconSection = document.getElementById('beaconSection');
+            beaconSection.style.display = 'block';
+            
+            const beaconBtn = document.getElementById('beaconBtn');
+            beaconBtn.disabled = false;
+            beaconBtn.innerText = t.beaconBtn;
+        }
+
+        function activateBeacon() {
+            const t = translations[currentLang];
+            const beaconBtn = document.getElementById('beaconBtn');
+            beaconBtn.disabled = true;
+            beaconBtn.innerText = t.beaconActive;
+            
+            alert(currentLang === 'hi' ? "ब्लूटूथ कमांड भेजा गया। पोल वार्निंग बीकन अब चमक रहा है।" : 
+                  currentLang === 'te' ? "బ్లూటూత్ కమాండ్ పంపబడింది. పోల్ వార్నింగ్ బీకాన్ ఇప్పుడు ఫ్లాష్ అవుతోంది." : 
+                  "Bluetooth command sent. Pole warning beacon is now flashing.");
+        }
+    </script>
+
+</body>
+</html>
